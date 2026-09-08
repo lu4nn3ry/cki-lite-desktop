@@ -16,5 +16,6 @@ filter hid valid models and made the selector misleading.
 ## Consequences
 
 Specialized models may appear and may not support the agent tool contract. The
-user selects the model explicitly, and fallback only uses models returned by
-the active catalog.
+user selects the model explicitly. The NIM service can also return a global
+catalog while a model is not enabled for the account; a model-level HTTP 404 is
+reported directly instead of causing fallback noise through every catalog item.

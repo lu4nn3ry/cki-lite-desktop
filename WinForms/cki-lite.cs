@@ -1620,6 +1620,7 @@ namespace CkiLite
 
                 string raw = null;
                 int retries = 0;
+                bool allowFallback = true;
                 while (true)
                 {
                     try
@@ -1638,6 +1639,13 @@ namespace CkiLite
                             Thread.Sleep(delay * 1000);
                             continue;
                         }
+                        if (httpEx != null && httpEx.Code == 404)
+                        {
+                            // NIM can advertise models globally while the account
+                            // has no deployment/function for that model. Trying
+                            // every catalog entry only creates noisy 404s.
+                            allowFallback = false;
+                        }
                         raw = null;
                         AppendAsync("\r[erro] " + prov.Name + " " + current + ": " + ex.Message, Color.Red);
                         break;
@@ -1646,6 +1654,12 @@ namespace CkiLite
 
                 if (raw == null)
                 {
+                    if (!allowFallback)
+                    {
+                        newHistory = history;
+                        currentModel = current;
+                        return "O modelo '" + current + "' não está disponível para esta conta NVIDIA NIM. Selecione outro modelo no catálogo; o endpoint /models pode listar modelos que não estão habilitados para sua conta.";
+                    }
                     bool switched = false;
                     foreach (string candidate in models)
                     {

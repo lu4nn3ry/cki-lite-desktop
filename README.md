@@ -23,6 +23,7 @@ The repository also contains the original Python CLI for Unix-like systems.
 - Chat with OpenAI-compatible tool calling.
 - NVIDIA NIM model catalog via `/models` and `/chat/completions`.
 - Complete NVIDIA model catalog, without an artificial family filter.
+- Clear handling when a catalog model is not enabled for the current NIM account.
 - Groq, OpenRouter, Ollama, and Google Gemini providers.
 - Visible provider and model selectors.
 - API key and base URL configuration dialog.
@@ -114,6 +115,11 @@ terminal(command, cwd, timeout, shell)
 PowerShell is used by default. CMD can be selected by the model when needed.
 The application runs commands with the permissions of the current Windows
 process, so use `Auto` only on machines and sessions you control.
+
+NVIDIA may return a global catalog from `/models` while only some models are
+enabled for an account. A model-level `HTTP 404` is therefore reported directly
+and does not trigger a noisy fallback through every catalog entry. Select an
+enabled model in the model selector.
 
 ## Tests
 
