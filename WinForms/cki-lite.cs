@@ -2042,6 +2042,29 @@ namespace CkiLite
             return CkiHttp.Api(prov.BaseUrl(baseUrl), apiKey, "/chat/completions", body, "POST");
         }
 
+        private JsonObject BuildOpenAiMessage(ChatMessage message)
+        {
+            var result = new JsonObject();
+            result["role"] = new JsonValue(message.Role);
+            result["content"] = new JsonValue(message.Content);
+            if (message.Role == "assistant" && !String.IsNullOrEmpty(message.ToolCallId))
+            {
+                var call = new JsonObject();
+                call["id"] = new JsonValue(message.ToolCallId);
+                call["type"] = new JsonValue("function");
+                var function = new JsonObject();
+                function["name"] = new JsonValue(String.IsNullOrEmpty(message.ToolName) ? "terminal" : message.ToolName);
+                function["arguments"] = new JsonValue(message.ToolArguments ?? "{}");
+                call["function"] = function;
+                var calls = new JsonArray();
+                calls.Add(call);
+                result["tool_calls"] = calls;
+            }
+            if (message.Role == "tool" && !String.IsNullOrEmpty(message.ToolCallId))
+                result["tool_call_id"] = new JsonValue(message.ToolCallId);
+            return result;
+        }
+
         private string BuildRequest(Provider prov, string model)
         {
             if (prov.IsGemini) return BuildGeminiRequest(prov, model, history, false, true);
@@ -2049,12 +2072,7 @@ namespace CkiLite
             body["model"] = new JsonValue(model);
             var msgs = new JsonArray();
             foreach (var m in history)
-            {
-                var mo = new JsonObject();
-                mo["role"] = new JsonValue(m.Role);
-                mo["content"] = new JsonValue(m.Content);
-                msgs.Add(mo);
-            }
+                msgs.Add(BuildOpenAiMessage(m));
             body["messages"] = msgs;
             var toolObj = Json.Parse(GeminiToTool(prov)) as JsonObject;
             var toolsArr = new JsonArray();
@@ -2073,12 +2091,7 @@ namespace CkiLite
             body["model"] = new JsonValue(model);
             var arr = new JsonArray();
             foreach (var m in msgs)
-            {
-                var mo = new JsonObject();
-                mo["role"] = new JsonValue(m.Role);
-                mo["content"] = new JsonValue(m.Content);
-                arr.Add(mo);
-            }
+                arr.Add(BuildOpenAiMessage(m));
             body["messages"] = arr;
             var toolObj = Json.Parse(GeminiToTool(prov)) as JsonObject;
             var toolsArr = new JsonArray();
@@ -2113,6 +2126,17 @@ namespace CkiLite
                     fr["name"] = new JsonValue("terminal");
                     fr["response"] = outObj;
                     po["functionResponse"] = fr;
+                    parts.Add(po);
+                }
+                else if (m.Role == "assistant" && !String.IsNullOrEmpty(m.ToolCallId))
+                {
+                    var po = new JsonObject();
+                    var fc = new JsonObject();
+                    fc["name"] = new JsonValue(String.IsNullOrEmpty(m.ToolName) ? "terminal" : m.ToolName);
+                    Json args = null;
+                    try { args = Json.Parse(m.ToolArguments ?? "{}"); } catch (Exception) { }
+                    fc["args"] = args as JsonObject != null ? args : new JsonObject();
+                    po["functionCall"] = fc;
                     parts.Add(po);
                 }
                 else

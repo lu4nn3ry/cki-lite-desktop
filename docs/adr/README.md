@@ -17,3 +17,4 @@ Each record is intentionally short and focused on one shipped capability.
 - [ADR-0010: Built-in diagnostics and tests](0010-diagnostics-and-tests.md)
 - [ADR-0011: Model labels and tool contract](0011-model-label-and-tool-contract.md)
 - [ADR-0012: Persistent user selection](0012-persistent-user-selection.md)
+- [ADR-0013: Tool-call history continuity](0013-tool-call-history-continuity.md)

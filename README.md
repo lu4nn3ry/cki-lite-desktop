@@ -32,6 +32,8 @@ The repository also contains the original Python CLI for Unix-like systems.
 - API key and base URL configuration dialog.
 - `.env` support without committing secrets.
 - Automatic fallback across available models.
+- Complete tool-call history continuity, including call IDs and function
+  arguments, across agent loops and model fallback.
 - PowerShell-first `terminal` tool with optional CMD.
 - Command timeout, working directory, stdout, stderr, and exit code.
 - `Safe`, `Ask` (default), and `Auto` command modes.
