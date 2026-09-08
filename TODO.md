@@ -26,6 +26,7 @@ Implementado no código atual:
 - [x] Seletor de provider e seletor de modelo visíveis.
 - [x] Catálogo remoto de modelos com cache local.
 - [x] Catálogo NVIDIA NIM sem filtro artificial de modelos.
+- [x] Otimização manual do catálogo NIM por tool calling e latência, com cache diário.
 - [x] NVIDIA NIM em `/models` e `/chat/completions`.
 - [x] Fallback automático entre modelos disponíveis.
 - [x] Providers adicionais já suportados: Groq, OpenRouter, Ollama e Gemini.

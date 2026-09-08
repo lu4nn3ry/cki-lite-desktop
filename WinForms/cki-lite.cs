@@ -417,7 +417,7 @@ namespace CkiLite
     // ---------- Model catalog ----------
     public class ModelCatalog
     {
-        public static List<string> VisibleModels(Provider provider, string baseUrl, string key, bool refresh)
+        public static List<string> VisibleModels(Provider provider, string baseUrl, string key, bool refresh, bool benchmark = false)
         {
             string home = Sessions.SessionDir();
             string cacheDir = Path.Combine(home, "cache");
@@ -440,6 +440,9 @@ namespace CkiLite
                 try { File.WriteAllText(cache, raw, Encoding.UTF8); } catch (Exception) { }
             }
 
+            if (benchmark && provider != null && provider.Name == "NVIDIA NIM")
+                models = DailyValidatedModels(provider, baseUrl, key, models, cacheDir, hash);
+
             string selected = Path.Combine(cacheDir, "selected.json");
             if (File.Exists(selected))
             {
@@ -452,6 +455,146 @@ namespace CkiLite
                 }
             }
             return models;
+        }
+
+        private class BenchmarkResult
+        {
+            public string Model;
+            public long Milliseconds;
+        }
+
+        private static List<string> DailyValidatedModels(Provider provider, string baseUrl, string key,
+            List<string> models, string cacheDir, string hash)
+        {
+            string daily = Path.Combine(cacheDir, "nim-validated-v2-" + hash + "-" + DateTime.Now.ToString("yyyyMMdd") + ".json");
+            if (File.Exists(daily))
+            {
+                try
+                {
+                    List<string> saved = ParseJsonStringArray(File.ReadAllText(daily));
+                    if (saved != null)
+                    {
+                        var current = new HashSet<string>(models);
+                        return saved.Where(m => current.Contains(m)).ToList();
+                    }
+                }
+                catch (Exception) { }
+            }
+
+            List<BenchmarkResult> results = new List<BenchmarkResult>();
+            object gate = new object();
+            int next = -1;
+            int workers = Math.Min(4, Math.Max(1, models.Count));
+            var threads = new List<Thread>();
+            for (int w = 0; w < workers; w++)
+            {
+                Thread thread = new Thread((ThreadStart)delegate
+                {
+                    while (true)
+                    {
+                        int index = Interlocked.Increment(ref next);
+                        if (index >= models.Count) break;
+                        string model = models[index];
+                        try
+                        {
+                            string body = BenchmarkBody(model);
+                            var watch = System.Diagnostics.Stopwatch.StartNew();
+                            string response = CkiHttp.Api(baseUrl, key, "/chat/completions", body, "POST");
+                            watch.Stop();
+                            if (SupportsTerminalTool(response))
+                                lock (gate) results.Add(new BenchmarkResult { Model = model, Milliseconds = watch.ElapsedMilliseconds });
+                        }
+                        catch (Exception) { }
+                    }
+                });
+                thread.IsBackground = true;
+                threads.Add(thread);
+                thread.Start();
+            }
+            foreach (Thread thread in threads) thread.Join();
+
+            if (results.Count == 0) return new List<string>();
+            results.Sort(delegate(BenchmarkResult a, BenchmarkResult b) { return a.Milliseconds.CompareTo(b.Milliseconds); });
+            var times = results.Select(r => r.Milliseconds).ToList();
+            long median = times[times.Count / 2];
+            long maxLatency = Math.Max(2500L, median * 2L);
+            List<string> validated = results.Where(r => r.Milliseconds <= maxLatency).Select(r => r.Model).ToList();
+            if (validated.Count == 0) validated.Add(results[0].Model);
+
+            var json = new JsonArray();
+            foreach (string model in validated) json.Add(new JsonValue(model));
+            try { File.WriteAllText(daily, json.ToJson(0), Encoding.UTF8); } catch (Exception) { }
+            return validated;
+        }
+
+        private static string BenchmarkBody(string model)
+        {
+            var body = new JsonObject();
+            body["model"] = new JsonValue(model);
+            var messages = new JsonArray();
+            var message = new JsonObject();
+            message["role"] = new JsonValue("user");
+            message["content"] = new JsonValue("Reply only with OK.");
+            messages.Add(message);
+            body["messages"] = messages;
+            var function = new JsonObject();
+            function["name"] = new JsonValue("terminal");
+            function["description"] = new JsonValue("Execute a terminal command.");
+            var parameters = new JsonObject();
+            parameters["type"] = new JsonValue("object");
+            var properties = new JsonObject();
+            var command = new JsonObject();
+            command["type"] = new JsonValue("string");
+            properties["command"] = command;
+            parameters["properties"] = properties;
+            var required = new JsonArray();
+            required.Add(new JsonValue("command"));
+            parameters["required"] = required;
+            function["parameters"] = parameters;
+            var tool = new JsonObject();
+            tool["type"] = new JsonValue("function");
+            tool["function"] = function;
+            var tools = new JsonArray();
+            tools.Add(tool);
+            body["tools"] = tools;
+            var choice = new JsonObject();
+            choice["type"] = new JsonValue("function");
+            var choiceFunction = new JsonObject();
+            choiceFunction["name"] = new JsonValue("terminal");
+            choice["function"] = choiceFunction;
+            body["tool_choice"] = choice;
+            body["temperature"] = new JsonNumber("0");
+            body["max_tokens"] = new JsonNumber("64");
+            return body.ToJson(0);
+        }
+
+        private static bool SupportsTerminalTool(string response)
+        {
+            try
+            {
+                Json doc = Json.Parse(response);
+                Json choices = doc.Get("choices");
+                if (choices == null || !choices.IsArray || choices.Count == 0) return false;
+                Json message = choices[0].Get("message");
+                Json calls = message != null ? message.Get("tool_calls") : null;
+                if (calls == null || !calls.IsArray || calls.Count == 0) return false;
+                Json function = calls[0].Get("function");
+                Json name = function != null ? function.Get("name") : null;
+                return name != null && name.Value == "terminal";
+            }
+            catch (Exception) { return false; }
+        }
+
+        public static string PickInitialModel(Provider provider, List<string> available, string current)
+        {
+            if (available == null || available.Count == 0) return null;
+            if (!String.IsNullOrEmpty(current) && available.Contains(current)) return current;
+
+            string configured = provider != null && provider.Name == "NVIDIA NIM"
+                ? Environment.GetEnvironmentVariable("NIM_MODEL") : null;
+            if (!String.IsNullOrEmpty(configured) && available.Contains(configured)) return configured;
+
+            return available[0];
         }
 
         private static string FetchModelsRaw(Provider provider, string baseUrl, string key)
@@ -883,6 +1026,13 @@ namespace CkiLite
         public override bool IsObject { get { return false; } }
     }
 
+    public class JsonNumber : Json
+    {
+        public JsonNumber(string v) { Value = v; }
+        public override bool IsArray { get { return false; } }
+        public override bool IsObject { get { return false; } }
+    }
+
     public class JsonArray : Json
     {
         public JsonArray() { }
@@ -905,6 +1055,8 @@ namespace CkiLite
         {
             var v = j as JsonValue;
             if (v != null) return JsonObject.EscapeValue(v.Value);
+            var n = j as JsonNumber;
+            if (n != null) return n.Value;
             var o = j as JsonObject;
             if (o != null) return o.ToJson(0);
             var a = j as JsonArray;
@@ -951,6 +1103,8 @@ namespace CkiLite
         {
             var v = j as JsonValue;
             if (v != null) return EscapeValue(v.Value);
+            var n = j as JsonNumber;
+            if (n != null) return n.Value;
             var o = j as JsonObject;
             if (o != null) return o.ToJson(0);
             var a = j as JsonArray;
@@ -995,6 +1149,7 @@ namespace CkiLite
         private Button refreshButton;
         private Button testButton;
         private Button settingsButton;
+        private Button optimizeButton;
         private ListBox terminalBox;
         private ListBox sessionList;
         private TextBox traceBox;
@@ -1176,6 +1331,11 @@ namespace CkiLite
             settingsButton.Width = 55;
             topBar.Items.Add(new ToolStripControlHost(settingsButton));
 
+            optimizeButton = new Button();
+            optimizeButton.Text = "Otimizar";
+            optimizeButton.Width = 70;
+            topBar.Items.Add(new ToolStripControlHost(optimizeButton));
+
             topBar.Items.Add(new ToolStripSeparator());
 
             statusLabel = new ToolStripLabel("inicializando...");
@@ -1232,6 +1392,7 @@ namespace CkiLite
             clearButton.Click += delegate { ClearHistory(); };
             exportButton.Click += delegate { ExportSession(); };
             settingsButton.Click += delegate { OpenSettingsDialog(); };
+            optimizeButton.Click += delegate { OptimizeModels(); };
             modelCombo.SelectedIndexChanged += ModelCombo_Changed;
             providerCombo.SelectedIndexChanged += ProviderCombo_Changed;
             verboseCheck.CheckedChanged += delegate
@@ -1351,8 +1512,8 @@ namespace CkiLite
                 foreach (var m in models) modelCombo.Items.Add(m);
                 if (models.Count > 0)
                 {
-                    modelCombo.SelectedIndex = 0;
-                    currentModel = models[0];
+                    currentModel = ModelCatalog.PickInitialModel(provider, models, currentModel);
+                    if (!String.IsNullOrEmpty(currentModel)) modelCombo.SelectedItem = currentModel;
                 }
                 else
                 {
@@ -1388,8 +1549,8 @@ namespace CkiLite
                 foreach (var m in models) modelCombo.Items.Add(m);
                 if (models.Count > 0)
                 {
-                    modelCombo.SelectedIndex = 0;
-                    currentModel = models[0];
+                    currentModel = ModelCatalog.PickInitialModel(provider, models, currentModel);
+                    if (!String.IsNullOrEmpty(currentModel)) modelCombo.SelectedItem = currentModel;
                 }
                 else
                 {
@@ -1406,6 +1567,47 @@ namespace CkiLite
                 AppendLine("Falha ao carregar catálogo de " + provider.Name + ": " + ex.Message, Color.Red);
                 statusLabel.Text = "falha no catálogo";
             }
+        }
+
+        private void OptimizeModels()
+        {
+            if (provider == null || provider.Name != "NVIDIA NIM")
+            {
+                AppendLine("A otimização de latência está disponível para NVIDIA NIM.", Color.DarkGray);
+                return;
+            }
+            Provider targetProvider = provider;
+            string targetBaseUrl = baseUrl;
+            string targetKey = apiKey;
+            optimizeButton.Enabled = false;
+            Status("validando modelos NIM; isso pode levar alguns minutos...");
+            AppendLine("Iniciando validação dinâmica do catálogo NIM. O resultado será salvo no cache diário.", Color.DarkGray);
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                List<string> result = null;
+                Exception error = null;
+                try { result = ModelCatalog.VisibleModels(targetProvider, targetBaseUrl, targetKey, true, true); }
+                catch (Exception ex) { error = ex; }
+                if (!IsHandleCreated) return;
+                BeginInvoke((MethodInvoker)delegate
+                {
+                    optimizeButton.Enabled = true;
+                    if (error != null)
+                    {
+                        AppendLine("Falha ao otimizar modelos: " + error.Message, Color.Red);
+                        Status("falha na otimização");
+                        return;
+                    }
+                    if (provider != targetProvider) return;
+                    models = result ?? new List<string>();
+                    modelCombo.Items.Clear();
+                    foreach (string model in models) modelCombo.Items.Add(model);
+                    currentModel = ModelCatalog.PickInitialModel(provider, models, currentModel);
+                    if (!String.IsNullOrEmpty(currentModel)) modelCombo.SelectedItem = currentModel;
+                    Status("modelos validados - " + models.Count + " disponíveis");
+                    AppendLine("Validação concluída: " + models.Count + " modelos com tool calling e latência aceitável.", Color.DarkGreen);
+                });
+            });
         }
 
         private void TestConnection()
@@ -1784,8 +1986,8 @@ namespace CkiLite
             if (toolObj != null) toolsArr.Add(toolObj);
             body["tools"] = toolsArr;
             body["tool_choice"] = new JsonValue("auto");
-            body["temperature"] = new JsonValue("0.2");
-            body["max_tokens"] = new JsonValue("4096");
+            body["temperature"] = new JsonNumber("0.2");
+            body["max_tokens"] = new JsonNumber("4096");
             return body.ToJson(0);
         }
 
@@ -1866,8 +2068,8 @@ namespace CkiLite
                 body["tools"] = toolsArr;
             }
             var gen = new JsonObject();
-            gen["temperature"] = new JsonValue("0.2");
-            gen["maxOutputTokens"] = new JsonValue("4096");
+            gen["temperature"] = new JsonNumber("0.2");
+            gen["maxOutputTokens"] = new JsonNumber("4096");
             body["generationConfig"] = gen;
             return body.ToJson(0);
         }

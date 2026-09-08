@@ -24,6 +24,8 @@ The repository also contains the original Python CLI for Unix-like systems.
 - NVIDIA NIM model catalog via `/models` and `/chat/completions`.
 - Complete NVIDIA model catalog, without an artificial family filter.
 - Clear handling when a catalog model is not enabled for the current NIM account.
+- Optional manual NIM optimization: validate tool calling and latency, then save
+  the ranked result in a daily cache.
 - Groq, OpenRouter, Ollama, and Google Gemini providers.
 - Visible provider and model selectors.
 - API key and base URL configuration dialog.
@@ -103,6 +105,11 @@ Supported keys:
 
 `.env`, `bin/`, `work/`, sessions, and private key files are ignored by Git.
 Never commit an API key.
+
+The initial catalog load does not benchmark every model. Use **Otimizar** when
+you want to validate NIM models manually. The operation runs in the background,
+keeps only models that support the terminal tool and have acceptable latency,
+and stores the result under `~\.cki-lite\cache` for the current day.
 
 ## Command Execution
 
