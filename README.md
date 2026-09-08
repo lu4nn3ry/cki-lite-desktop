@@ -28,6 +28,7 @@ The repository also contains the original Python CLI for Unix-like systems.
   the ranked result in a daily cache.
 - Groq, OpenRouter, Ollama, and Google Gemini providers.
 - Visible provider and model selectors.
+- Persistent provider, model, and approval-mode selectors.
 - API key and base URL configuration dialog.
 - `.env` support without committing secrets.
 - Automatic fallback across available models.
@@ -82,7 +83,9 @@ bin\cki-lite.exe
 ## Configuration
 
 Use the **Config** button to set the active provider key, optional base URL,
-and command execution mode. Keys can be loaded from environment variables or a
+and command execution mode. The top-level `Modo` dropdown exposes `plan`,
+`accept-edits`, and `auto-approve`. The selected provider, model, and mode are
+stored in `~\.cki-lite\settings.json`; API keys are never stored there. Keys can be loaded from environment variables or a
 `.env` file in the executable directory, `~\.cki-lite\.env`, or the current
 directory.
 

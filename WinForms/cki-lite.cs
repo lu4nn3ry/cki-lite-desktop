@@ -47,6 +47,13 @@ namespace CkiLite
         public List<ChatMessage> Messages = new List<ChatMessage>();
     }
 
+    public class UserSettings
+    {
+        public string Provider;
+        public string Model;
+        public ShellMode ApprovalMode = ShellMode.Ask;
+    }
+
     public class ModelChoice
     {
         public string Id;
@@ -772,7 +779,7 @@ namespace CkiLite
             foreach (string path in Directory.GetFiles(SessionDir(), "*.json"))
             {
                 string name = Path.GetFileNameWithoutExtension(path);
-                if (!String.IsNullOrEmpty(name) && name != "selected") result.Add(name);
+                if (!String.IsNullOrEmpty(name) && name != "selected" && name != "settings") result.Add(name);
             }
             result.Sort();
             result.Reverse();
@@ -814,6 +821,38 @@ namespace CkiLite
         {
             string path = Path.Combine(SessionDir(), sessionId + ".json");
             if (File.Exists(path)) File.Delete(path);
+        }
+
+        public static UserSettings LoadSettings()
+        {
+            UserSettings result = new UserSettings();
+            try
+            {
+                string path = Path.Combine(SessionDir(), "settings.json");
+                if (!File.Exists(path)) return result;
+                Json doc = Json.Parse(File.ReadAllText(path));
+                if (doc == null || !doc.IsObject) return result;
+                Json provider = doc.Get("provider");
+                Json model = doc.Get("model");
+                Json approval = doc.Get("approval_mode");
+                if (provider != null) result.Provider = provider.Value;
+                if (model != null) result.Model = model.Value;
+                int mode;
+                if (approval != null && Int32.TryParse(approval.Value, out mode) && mode >= 0 && mode <= 2)
+                    result.ApprovalMode = (ShellMode)mode;
+            }
+            catch (Exception) { }
+            return result;
+        }
+
+        public static void SaveSettings(UserSettings settings)
+        {
+            if (settings == null) return;
+            var doc = new JsonObject();
+            doc["provider"] = new JsonValue(settings.Provider ?? "");
+            doc["model"] = new JsonValue(settings.Model ?? "");
+            doc["approval_mode"] = new JsonNumber(((int)settings.ApprovalMode).ToString());
+            File.WriteAllText(Path.Combine(SessionDir(), "settings.json"), doc.ToJson(0), Encoding.UTF8);
         }
     }
 
@@ -1150,6 +1189,7 @@ namespace CkiLite
         private Button testButton;
         private Button settingsButton;
         private Button optimizeButton;
+        private ComboBox approvalCombo;
         private ListBox terminalBox;
         private ListBox sessionList;
         private TextBox traceBox;
@@ -1168,6 +1208,7 @@ namespace CkiLite
         private bool busy;
         private bool verbose;
         private ShellMode shellMode;
+        private UserSettings userSettings;
 
         private const string ToolJson = "{\"type\":\"function\",\"function\":{\"name\":\"terminal\",\"description\":\"Execute a shell command on this Windows host (PowerShell by default) for the user request.\",\"parameters\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\"},\"cwd\":{\"type\":\"string\"},\"timeout\":{\"type\":\"integer\"},\"shell\":{\"type\":\"string\",\"enum\":[\"powershell\",\"cmd\"]}},\"required\":[\"command\"]}}}";
 
@@ -1297,9 +1338,19 @@ namespace CkiLite
             topBar.Items.Add(new ToolStripLabel("Modelo:"));
             modelCombo = new ComboBox();
             modelCombo.DropDownStyle = ComboBoxStyle.DropDownList;
-            modelCombo.Width = 320;
+            modelCombo.Width = 280;
             var host = new ToolStripControlHost(modelCombo);
             topBar.Items.Add(host);
+
+            topBar.Items.Add(new ToolStripLabel("Modo:"));
+            approvalCombo = new ComboBox();
+            approvalCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+            approvalCombo.Width = 120;
+            approvalCombo.Items.Add("plan");
+            approvalCombo.Items.Add("accept-edits");
+            approvalCombo.Items.Add("auto-approve");
+            approvalCombo.SelectedIndex = 1;
+            topBar.Items.Add(new ToolStripControlHost(approvalCombo));
 
             refreshButton = new Button();
             refreshButton.Text = "Atualizar";
@@ -1395,6 +1446,7 @@ namespace CkiLite
             optimizeButton.Click += delegate { OptimizeModels(); };
             modelCombo.SelectedIndexChanged += ModelCombo_Changed;
             providerCombo.SelectedIndexChanged += ProviderCombo_Changed;
+            approvalCombo.SelectedIndexChanged += ApprovalCombo_Changed;
             verboseCheck.CheckedChanged += delegate
             {
                 verbose = verboseCheck.Checked;
@@ -1403,6 +1455,14 @@ namespace CkiLite
             sessionList.SelectedIndexChanged += delegate { LoadSelectedSession(); };
             newSessionButton.Click += delegate { NewSession(); };
             deleteSessionButton.Click += delegate { DeleteSelectedSession(); };
+        }
+
+        private void ApprovalCombo_Changed(object sender, EventArgs e)
+        {
+            if (approvalCombo.SelectedIndex == 0) shellMode = ShellMode.Safe;
+            else if (approvalCombo.SelectedIndex == 2) shellMode = ShellMode.Auto;
+            else shellMode = ShellMode.Ask;
+            SaveUserSettings();
         }
 
         private void OpenSettingsDialog()
@@ -1415,6 +1475,8 @@ namespace CkiLite
                 if (dlg.SaveToEnv) Sessions.WriteKeyToDotenv(provider, apiKey);
                 if (dlg.BaseUrl.Length > 0) baseUrl = dlg.BaseUrl;
                 shellMode = dlg.ShellMode;
+                approvalCombo.SelectedIndex = (int)shellMode;
+                SaveUserSettings();
                 Status("configuração salva");
                 TryLoadModels(true);
             }
@@ -1432,7 +1494,10 @@ namespace CkiLite
         private void ModelCombo_Changed(object sender, EventArgs e)
         {
             if (modelCombo.SelectedIndex >= 0 && models != null && modelCombo.SelectedIndex < models.Count)
+            {
                 currentModel = models[modelCombo.SelectedIndex];
+                SaveUserSettings();
+            }
         }
 
         private void ProviderCombo_Changed(object sender, EventArgs e)
@@ -1446,6 +1511,7 @@ namespace CkiLite
                 baseUrl = provider.BaseUrl(b);
                 apiKey = Environment.GetEnvironmentVariable(provider.EnvKey);
                 if (apiKey == null) apiKey = "";
+                SaveUserSettings();
                 Status("carregando catálogo (" + provider.Name + ")...");
                 TryLoadModels(false);
             }
@@ -1454,6 +1520,8 @@ namespace CkiLite
         private void InitializeApp()
         {
             Sessions.LoadDotenv();
+            userSettings = Sessions.LoadSettings();
+            shellMode = userSettings.ApprovalMode;
 
             sessionId = DateTime.Now.ToString("yyyyMMdd-HHmmss");
             startedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
@@ -1465,13 +1533,20 @@ namespace CkiLite
 
             // Prefer a provider whose key is already configured.
             int preferred = 0;
+            if (!String.IsNullOrEmpty(userSettings.Provider))
+            {
+                for (int i = 0; i < all.Count; i++)
+                    if (all[i].Name == userSettings.Provider) { preferred = i; break; }
+            }
             for (int i = 0; i < all.Count; i++)
             {
+                if (!String.IsNullOrEmpty(userSettings.Provider)) break;
                 string envKey = Environment.GetEnvironmentVariable(all[i].EnvKey);
                 if (!String.IsNullOrEmpty(envKey)) { preferred = i; break; }
             }
             providerCombo.SelectedIndex = preferred;
             provider = all[preferred];
+            approvalCombo.SelectedIndex = (int)shellMode;
             RefreshSessionList();
 
             string baseEnv = ProviderEnv.BaseUrlEnvKey(provider);
@@ -2272,6 +2347,17 @@ namespace CkiLite
         private void SessionSave()
         {
             try { Sessions.Save(sessionId, currentModel, history, startedAt); }
+            catch (Exception) { }
+        }
+
+        private void SaveUserSettings()
+        {
+            if (provider == null) return;
+            if (userSettings == null) userSettings = new UserSettings();
+            userSettings.Provider = provider.Name;
+            userSettings.Model = currentModel ?? "";
+            userSettings.ApprovalMode = shellMode;
+            try { Sessions.SaveSettings(userSettings); }
             catch (Exception) { }
         }
 
