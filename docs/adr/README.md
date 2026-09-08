@@ -15,3 +15,4 @@ Each record is intentionally short and focused on one shipped capability.
 - [ADR-0008: JSON session persistence](0008-json-session-persistence.md)
 - [ADR-0009: WinForms trace and session workspace](0009-trace-session-workspace.md)
 - [ADR-0010: Built-in diagnostics and tests](0010-diagnostics-and-tests.md)
+- [ADR-0011: Model labels and tool contract](0011-model-label-and-tool-contract.md)

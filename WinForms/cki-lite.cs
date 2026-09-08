@@ -1798,7 +1798,7 @@ namespace CkiLite
                 if (res.NewHistory != null) history = res.NewHistory;
                 if (res.Text != null && res.Text.Length > 0)
                 {
-                    AppendRichMarkdown("NIM> ", Color.FromArgb(128, 0, 128), res.Text);
+                    AppendRichMarkdown((String.IsNullOrEmpty(res.Model) ? "modelo" : res.Model) + "> ", Color.FromArgb(128, 0, 128), res.Text);
                 }
                 Status("pronto - " + res.Model);
                 SessionSave();
@@ -1900,7 +1900,7 @@ namespace CkiLite
 
                 if (message.Content != null && message.Content.Length > 0)
                 {
-                    AppendAsync("\r" + prov.Name + "> " + message.Content + "\r", Color.FromArgb(60, 60, 60));
+                    AppendAsync("\r" + current + "> " + message.Content + "\r", Color.FromArgb(60, 60, 60));
                 }
 
                 string json = message.ToolArguments != null ? message.ToolArguments : "{}";
@@ -2005,6 +2005,13 @@ namespace CkiLite
                 arr.Add(mo);
             }
             body["messages"] = arr;
+            var toolObj = Json.Parse(GeminiToTool(prov)) as JsonObject;
+            var toolsArr = new JsonArray();
+            if (toolObj != null) toolsArr.Add(toolObj);
+            body["tools"] = toolsArr;
+            body["tool_choice"] = new JsonValue("auto");
+            body["temperature"] = new JsonNumber("0.2");
+            body["max_tokens"] = new JsonNumber("4096");
             return body.ToJson(0);
         }
 
@@ -2227,7 +2234,8 @@ namespace CkiLite
                 foreach (ChatMessage message in history)
                 {
                     Color color = message.Role == "user" ? Color.FromArgb(0, 90, 160) : Color.FromArgb(60, 60, 60);
-                    AppendLine((message.Role == "user" ? "Você> " : "NIM> ") + (message.Content ?? ""), color);
+                    string label = message.Role == "user" ? "Você> " : (String.IsNullOrEmpty(snapshot.Model) ? "modelo> " : snapshot.Model + "> ");
+                    AppendLine(label + (message.Content ?? ""), color);
                 }
                 Status("sessão carregada - " + sessionId);
             }
